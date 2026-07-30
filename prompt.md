@@ -1,51 +1,3 @@
-# Audit‑to‑A — A Reusable Deep‑Audit Prompt for Any Codebase
-
-A portable, tool‑grounded audit methodology that grades a codebase against an **operational
-rubric** (a deterministic weighted formula, not a vibe), records findings in a **persistent
-ledger** so progress compounds across runs, and emits a **staged remediation plan** that — when
-executed — provably reaches an "A." It works for one repo or many, in any language.
-
-> **Why this exists.** A normal "review my code" prompt produces a different ad‑hoc grade every
-> time and re‑finds the same handful of salient issues. It has a structural ceiling: the grade is
-> an LLM judgment call (anchors to "competent‑but‑imperfect" ≈ B forever), prior fixes are never
-> credited, thoroughness is capped, findings are eyeballed instead of tool‑measured, and test/branch
-> coverage is never quantified. This prompt removes that ceiling by making the grade a *formula over
-> measurable gates* — once every gate is green, the grade **is** an A by construction, with no
-> opinion left to disagree with.
-
----
-
-## How to use this (read once, then hand the prompt below to your LLM)
-
-1. **Fill in the placeholders** in *Section 0 — Inputs* (`{{LIKE_THIS}}`). The only mandatory one is
-   the repo path(s). Everything else has a sensible default.
-2. **Give the LLM the entire block** from `═══ BEGIN PROMPT ═══` to `═══ END PROMPT ═══`.
-3. **Pick the execution mode:**
-   - **Agentic LLM with tools** (Claude Code, Cursor, an SDK agent, anything with shell + file
-     access): it runs the whole thing itself — census, finders, verification, writes the
-     scorecard/ledger. This is the intended mode.
-   - **Multi‑agent orchestration available** (e.g. Claude Code's Workflow tool, or any fan‑out
-     harness): use it for Phase 1/2 — one agent per *repo × lens*, then adversarial verifiers. Far
-     more thorough.
-   - **Plain chat LLM, no tools:** it will print the exact census commands for *you* to run, you
-     paste the outputs back, and it triages from there. Slower, but the method still holds.
-4. **Re‑run after each remediation milestone.** The scorecard diff is the proof the grade is
-   climbing. Same code state + same pinned SHAs ⇒ same letter (reproducible by design).
-
-The five things that make this different from an ordinary audit — keep them intact if you adapt it:
-
-| Ordinary audit | This method |
-|---|---|
-| Grade is an LLM vibe → anchors to B every run | **Grade is a weighted formula** over measurable per‑dimension gates |
-| "Ignore prior reviews / fresh eyes" → can't compound | **Persistent scorecard + ledger**; credit closed items; progress accumulates |
-| "Prefer 15 findings over 50" → caps thoroughness | **No finding cap; exhaustive module × dimension matrix; loop‑until‑dry** |
-| Eyeballed by reading code | **Tool census is ground truth**; the model triages a complete machine inventory |
-| "Tests exist → looks fine" | **Coverage (esp. branch) is a primary, quantified workstream** |
-
----
-
-═══ BEGIN PROMPT ═══
-
 # ROLE
 
 You are a **senior staff engineer and audit lead**. Your job is to produce a **reproducible,
@@ -144,9 +96,9 @@ actually regressed. (This is the deliberate reversal of "ignore prior reviews.")
   `requirements.txt`, `go.mod`, `pom.xml`/`build.gradle`, `Cargo.toml`, …).
 
 **3.2 Census — generate a complete machine inventory before reading code for judgment.** Use the
-*Appendix A* cookbook for your stack(s). Add the analyzers/linters permanently (at **warning**
-severity — never break the existing build on day one; **count, don't fail**) so the census becomes
-CI‑enforced rather than a one‑off. Capture, per repo:
+*Appendix A* cookbook (end of this prompt) for your stack(s). Add the analyzers/linters permanently
+(at **warning** severity — never break the existing build on day one; **count, don't fail**) so the
+census becomes CI‑enforced rather than a one‑off. Capture, per repo:
 
 - **Warning/analyzer baseline** — build/lint with structured output (SARIF or JSON); tally by rule ID.
   This is the unmeasured baseline behind most "stuck at B" audits.
@@ -253,11 +205,9 @@ SHAs; add the stale‑checkout guard. These produce grade‑relevant data within
 - **Credit prior work.** Read the existing ledger first; closed items stay closed unless they
   regressed.
 
-═══ END PROMPT ═══
-
 ---
 
-## Appendix A — Census command cookbook (per stack)
+# APPENDIX A — CENSUS COMMAND COOKBOOK (per stack)
 
 Adapt paths/solution names. Add analyzers at **warning** severity first (count, don't break the build).
 
@@ -286,14 +236,3 @@ Adapt paths/solution names. Add analyzers at **warning** severity first (count, 
 
 ### Cross‑language (always)
 - Duplication: `jscpd` over all source dirs. Secrets: `gitleaks`/`trufflehog` over tree **and history**. Licenses: an SCA/license scanner. CI: grep every pipeline file for `allow_failure`/`continue-on-error` to inventory non‑blocking gates.
-
----
-
-## Appendix B — Quick‑start checklist
-
-- [ ] Fill Section 0 inputs (at minimum, the repo path(s)).
-- [ ] Phase 0: pin SHAs, confirm you're on the canonical (not a stale) checkout, run the census.
-- [ ] Stand up `audit/` (scorecard + empty `backlog.jsonl`).
-- [ ] Phase 1–5: finders → adversarial verify → dedup/map → loop‑until‑dry → synthesis.
-- [ ] Emit the output contract (Section 6).
-- [ ] Pick the top milestone task by grade leverage; execute; re‑run the audit; watch the scorecard diff.
