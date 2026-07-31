@@ -9,7 +9,9 @@ honest residuals plainly.
 
 If you have tool access (shell, file read/write), **execute every step yourself**. If you do not,
 emit the exact commands for the human to run and triage the pasted results. If you have multi‑agent
-orchestration, fan out the finders and verifiers (Phase 1–2) and synthesize their structured output.
+orchestration, fan out the finders (Phase 1) and the verifiers (Phase 3) and synthesize their
+structured output — but read Section 4.0 first: **verification is where an audit's budget is won or
+lost**, and the cheap filtering in Phase 2 belongs before it.
 
 ---
 
@@ -29,6 +31,11 @@ orchestration, fan out the finders and verifiers (Phase 1–2) and synthesize th
 - **Rubric tuning (optional):** `{{WEIGHT_OR_THRESHOLD_OVERRIDES or "use defaults"}}`.
 - **DB‑change policy:** `{{"apply" | "review-only" | "exclude"}}` for data‑access/index findings
   (default: review‑only — report, don't apply).
+- **Budget:** `{{BUDGET or "standard"}}` — `quick` · `standard` · `exhaustive`, or an explicit token
+  ceiling. This scales **verification depth and loop rounds only**. Discovery stays exhaustive at every
+  budget: the audit always *completes*, it does not always *argue with itself as long*.
+- **Resume:** if `{{AUDIT_DIR}}/run-state.json` exists with `"status":"in-progress"`, this is a
+  **resume of that run**, not a fresh one. See Section 4.0 before doing anything else.
 
 ---
 
@@ -68,20 +75,47 @@ actually regressed. (This is the deliberate reversal of "ignore prior reviews.")
 - **`scorecard.md`** — the living grade. Header **pins commit SHA + branch for each repo** at grading
   time (this kills the stale‑checkout hazard — see Phase 0). Body = the Section 1 rubric table with
   each dimension's current score, gate status, cited evidence, and the computed composite letter. A
-  **run‑history** table logs each grading (date, SHAs, composite, what moved). Updated every run.
+  **run‑history** table logs each grading (date, SHAs, composite, what moved, **approximate agent/token
+  cost, and which stop condition ended the loop**). Updated every run.
 - **`backlog.jsonl`** — the master findings ledger, one JSON object per line. Findings are **never
   deleted**; they move to `closed` or `wontfix`. Schema:
   ```json
-  {"id":"SEC-001","dimension":1,"repo":"<name>","file":"path","line":42,
+  {"id":"SEC-001","fingerprint":"<stable hash: repo|file|rule-or-normalized-what>",
+   "dimension":1,"repo":"<name>","file":"path","line":42,
    "what":"one-line problem","why":"impact/risk","severity":"Critical|High|Medium|Low",
+   "severityAsFiled":"<what the finder claimed, if verification corrected it>",
+   "provenance":"tool|inferred","sites":["file:line", "..."],
    "suggestedFix":"...","effort":"S|M|L|XL","confidence":0.0,
-   "status":"open|closed|wontfix","verifiedBy":"tool|file:line|test",
+   "status":"candidate|open|closed|wontfix|unverified",
+   "verifiedBy":"<tool>+<ruleId>|<n>/<m> skeptics|test|filed-unadjudicated|null",
    "firstSeen":"YYYY-MM-DD","closedCommit":"<sha or null>"}
   ```
+  `id` is sequential and human‑facing; **`fingerprint` is the identity** — it must be derived from
+  content (repo + file + rule ID or normalized `what`) so the same defect gets the same fingerprint on
+  every run. Sequential IDs alone cannot survive dedup, resume, or cross‑run credit.
+- **`verdicts.jsonl`** — one line per skeptic verdict, keyed by `fingerprint`. **Append the moment a
+  verdict lands, never batched at end of stage.** This file is what makes verification idempotent
+  across rounds, resumed sessions, and re‑runs of an orchestration script (Section 4.0).
+- **`run-state.json`** — the checkpoint: `{"status":"in-progress|complete","phase":"...","startedAt":...,
+  "shas":{...},"budget":{...},"lensesComplete":[...],"stopCondition":null}`. Written after **every**
+  phase and every loop round. Without it, a run that dies mid‑audit cannot tell a later session what
+  was already paid for.
 - **`closed.md`** — human‑readable log of what was fixed and in which commit (credits real work so the
   grade reflects it).
 - **`census/<date>/`** — raw tool outputs (SARIF, coverage XML/JSON, jscpd, dead‑code, vuln scans,
   warning tallies) for each run, so every finding is reproducible and diffable.
+
+**Severity is assigned by consequence, not by how bad the code looks.** Finders given no anchor
+over‑rate severity badly, which then inflates verification cost (Section 4.0 spends by severity) and
+misorders remediation. Use these anchors, and apply the test *"if this shipped Friday, what is
+observably wrong by Monday?"* — if the answer is "nothing," it is not Critical or High.
+
+| Severity | Bar |
+|---|---|
+| **Critical** | Money, data, or auth is wrong in production **on a reachable path**: silent data loss/corruption, unauthenticated access to protected data, double‑charge or dropped payment, RCE, live secret exposed. Requires a concrete path from ordinary or untrusted input to the harm. |
+| **High** | Reachable defect producing incorrect results, an outage, or a security weakening that needs one more condition to become Critical. |
+| **Medium** | Real defect with bounded blast radius, or requiring an unusual state; or a gate the rubric requires that is measurably absent. |
+| **Low** | Hygiene, maintainability, quality. Correct today; costs later. |
 
 ---
 
@@ -120,35 +154,131 @@ rediscover it by reading.
 
 Run this as a multi‑agent fan‑out if you can, otherwise as sequential passes (one lens at a time).
 
+## 4.0 — Cost model, resume, and the one rule that governs both
+
+**Where an audit's cost actually goes.** Discovery is cheap: one agent per repo × lens, reading a
+census that already exists on disk. **Verification is the entire budget** — it scales as
+*findings × skeptics*, so an unfiltered 270‑finding run at 3 skeptics each is ~810 agents, and the
+census and finders together are a rounding error beside it. Every rule below follows from that one
+fact:
+
+> **Do the free filtering before the expensive verification, and never pay for the same verdict twice.**
+
+This is why Phase 2 (collapse + triage — pure computation, no agents) sits **before** Phase 3
+(verification), and must stay there. Deduping after verifying means paying 3× to argue about findings
+you were going to merge or drop anyway.
+
+**Pass paths, not payloads.** A finder gets its census *file paths* plus its own pre‑filtered slice —
+never a raw SARIF/cobertura/jscpd dump pasted inline. Let it read what it needs. Inlining full census
+output into each finder prompt multiplies the census cost by the number of finders.
+
+**Fan‑out and depth by budget** (skeptic counts are per *inferred* finding — see Phase 3):
+
+| Budget | Finder fan‑out | Critical | High | Medium | Low | Dry rounds (K) |
+|---|---|---|---|---|---|---|
+| `quick` | **all lenses**, one agent per lens (repos batched) | 2 | 1 | 0 | 0 | 1 |
+| `standard` | **all lenses** × repo | 3 | 2 | 1 | 0 | 2 |
+| `exhaustive` | **all lenses** × repo, re‑seeded per module | 3 | 3 | 2 | 1 | 3 |
+
+Every lens runs at every budget — what scales is granularity and depth of argument, never which
+questions get asked. A Critical never drops below 2 skeptics at any budget. A finding assigned **0
+skeptics is ledgered as filed** with `verifiedBy:"filed-unadjudicated"` and `confidence` ≤ 0.5; that is
+an honest "nobody argued about this," which is neither a verified finding nor a refuted one, and the
+scorecard counts it separately from both.
+
+**Resume protocol — run this before anything else.** Read `run-state.json`. If a run is
+`in-progress`:
+1. **Do not re‑run the census** if `census/<date>/` exists for these SHAs — it is deterministic
+   output of pinned code. Re‑read it.
+2. **Do not re‑run finders** for lenses in `lensesComplete` — their candidates are already in
+   `backlog.jsonl` at `status:"candidate"`.
+3. **Do not re‑verify any fingerprint present in `verdicts.jsonl`.**
+4. Resume at `phase`, and only for the work not yet checkpointed.
+
+Findings are written to `backlog.jsonl` as `candidate` **the moment a finder returns** and promoted to
+`open` when verified — they are never held in memory until synthesis. A run that dies in Phase 3 must
+cost its successor the *unverified remainder only*. Re‑verifying from scratch on resume is the single
+most expensive failure mode this prompt has; `verdicts.jsonl` exists to make it impossible.
+
 **Phase 1 — Finders (fan out by repo × lens; blind to each other; NO finding cap).** Each finder
 receives its census slice + directory scope and returns structured findings (the `backlog.jsonl`
-schema). Lenses:
+schema), written to disk as `candidate` on return. Lenses:
 `security/authz` · `correctness/error-handling` · `architecture/coupling/god-objects` ·
 `performance/data-access (N+1, sync↔async, unbounded queries)` · `testing-gaps (map uncovered
 branches → risk)` · `cross-project seams/contract-drift/duplication` · `dead-code` ·
 `concurrency/async-correctness` · `input-validation/upload-safety` · `dependencies/supply-chain` ·
 `observability/ops` · `documentation`.
 Finders enumerate **exhaustively** against the census — the B→A gap is a long tail across many files
-that a "top‑15" pass can't reach.
+that a "top‑15" pass can't reach. Two obligations on every finder:
+- **Tag `provenance`.** `tool` = a census tool asserts this directly (analyzer rule hit, jscpd block,
+  vulnerable‑package row, uncovered line, `allow_failure` grep hit). `inferred` = a claim about
+  behavior that no tool emitted.
+- **Collapse to root cause.** If N sites share one structural cause, file **one** finding naming the
+  cause with the N sites in `sites[]` — not N findings. *35 page models at 0% coverage because the test
+  project has no HTTP test seam is one finding with 35 sites, not 35 findings.* Root‑cause clones are
+  the largest single source of both ledger noise and verification cost.
 
-**Phase 2 — Adversarial verification.** Send each candidate finding to N independent skeptics
-(default 3) **prompted to refute it**, defaulting to *refuted if uncertain*. Only survivors with
-majority support proceed. Where a finding can fail in more than one way, give each verifier a distinct
-lens (does‑it‑reproduce / security / correctness). This kills the plausible‑but‑wrong findings that
-make big audits noisy.
+**Phase 2 — Collapse + triage (pure computation — no agents, no tokens).** Run this **before** paying
+for verification. In script/plain code, not by asking a model:
+1. **Dedup by `fingerprint`**; merge `sites[]`.
+2. **Collapse root causes** the finders missed.
+3. **Map to rubric** — attach each candidate to a Section‑1 dimension; compute the per‑dimension gap
+   vs the "A" gate.
+4. **Grade‑relevance gate.** The grade is a formula over gates. Ask: *if this were fixed alone, could
+   any dimension's 0–4 score move?* If a dimension is pinned by a structural blocker, the 30th instance
+   of that blocker moves nothing. Such findings are still **ledgered** — they are real work, and the
+   remediation plan still carries them — but they drop to 0 skeptics and consume **no verification
+   budget**. Grade‑irrelevant is a statement about *scoring leverage*, never about validity.
+5. **Assign verification tier** per Phase 3.
 
-**Phase 3 — Dedup + map to rubric.** Collapse duplicates; attach each survivor to a Section‑1
-dimension; compute the per‑dimension gap vs the "A" gate.
+**Phase 3 — Adversarial verification (budgeted, tiered, idempotent).**
+
+**Verify only what a tool cannot.** A `provenance:"tool"` finding is *already verified* — the compiler,
+scanner, or coverage report asserts it. Sending a compiler‑proven dead symbol to a panel of LLM
+skeptics to be "refuted" buys nothing and costs three agents. Record `verifiedBy:"<tool>+<ruleId>"`,
+promote to `open`, and move on. **Adversarial verification exists for `inferred` findings only** —
+they are the only ones that can be plausible‑but‑wrong.
+
+Send each *inferred* finding to the skeptic count its severity earns (table in 4.0), **prompted to
+refute it**, defaulting to *refuted if uncertain*. Only survivors with majority support proceed. Where
+a finding can fail in more than one way, give each skeptic a distinct lens — Critical:
+does‑it‑reproduce / impact‑or‑exploitability / is‑there‑a‑compensating‑control; High:
+does‑it‑reproduce / impact. Redundant identical skeptics catch less than diverse ones at the same cost.
+
+Three rules that are not optional, because each one silently corrupts the grade:
+
+- **A crashed skeptic is not a vote.** *Refuted if uncertain* describes a skeptic that examined the
+  finding and remained unconvinced. It never describes one that errored, timed out, or returned null.
+  **Count only verdicts that actually came back.** If a finding ends with fewer verdicts than its tier
+  requires, retry once; if it still cannot be judged, mark it `unverified`, exclude it from the verified
+  set, and **state the count in the scorecard**. Converting infrastructure failure into a substantive
+  "refuted" deletes real findings and discards every token that produced them.
+- **Apply what verification returns.** A skeptic returns a verdict *and* may return a severity
+  correction — both are outputs. If a majority propose a different severity, the corrected value becomes
+  `severity` and the original is preserved as `severityAsFiled`. Corrections that are recorded but never
+  applied leave the Critical/High counts and the whole remediation order wrong.
+- **Verification is idempotent.** Check `verdicts.jsonl` for the fingerprint before spawning any
+  skeptic; append each verdict the instant it lands. A finding is verified **once** — not again in a
+  later round, a resumed session, or a re‑run of an orchestration script.
 
 **Phase 4 — Loop‑until‑dry + completeness critic.** Re‑run finders on areas that produced findings
-**and on any module not yet covered** (track a module × dimension coverage matrix) until **K
-consecutive rounds (default 2) surface nothing new**. A completeness critic asks "which module /
-modality / unverified claim remains?" and seeds the next round. **Log anything you cap or sample** —
+**and on any module not yet covered** (track a module × dimension coverage matrix). A completeness
+critic asks "which module / modality / unverified claim remains?" and seeds the next round. Each round
+re‑enters Phase 2 first, so a round that only re‑finds known issues costs nothing to verify.
+
+Stop on **whichever comes first**: K consecutive rounds surface nothing new (K per budget, default 2);
+the round's new findings are all grade‑irrelevant (dry *for grading* even if not dry for the ledger);
+or the verification budget is spent. **Record which condition stopped it in `run-state.json` and the
+scorecard** — "stopped: 2 dry rounds" and "stopped: budget" are very different claims about
+completeness, and only the first supports the word *exhaustive*. **Log anything you cap or sample** —
 silent truncation reads as "covered everything" when it didn't.
 
-**Phase 5 — Synthesis.** Update `scorecard.md` (per‑dimension scores + composite letter, SHAs
-pinned, run‑history row), append survivors to `backlog.jsonl`, mark regressed/closed items in
-`closed.md`, and emit the milestone‑ordered remediation plan (Section 5).
+**Phase 5 — Synthesis.** Promote surviving candidates to `open` in `backlog.jsonl` and drop refuted
+ones to `wontfix` with the verdict; update `scorecard.md` (per‑dimension scores + composite letter,
+SHAs pinned, run‑history row incl. cost and stop condition); mark regressed/closed items in
+`closed.md`; emit the milestone‑ordered remediation plan (Section 5); set `run-state.json` to
+`complete`. **Any dimension whose evidence includes `unverified` findings says so in its evidence
+cell** — an unjudged lens is a hole in the grade, not a silent pass.
 
 ---
 
@@ -175,14 +305,17 @@ SHAs; add the stale‑checkout guard. These produce grade‑relevant data within
 
 1. **`scorecard.md`** — pinned SHAs, the 9‑row rubric table with scores + cited evidence, the computed
    composite GPA and letter, and a run‑history row.
-2. **`backlog.jsonl`** — every verified finding, schema‑valid, deduped, dimension‑tagged, severity‑
-   and effort‑rated.
+2. **`backlog.jsonl`** — every finding, schema‑valid, deduped/root‑cause‑collapsed, dimension‑tagged,
+   severity‑ and effort‑rated, each carrying its `fingerprint`, `provenance`, and `verifiedBy`.
+   Anything left `unverified` stays in the file and is counted in the summary.
 3. **`closed.md`** updates — anything credited as fixed/regressed since the last run.
-4. **`census/<date>/`** — the raw tool outputs the grades rest on.
+4. **`census/<date>/`** + **`verdicts.jsonl`** + **`run-state.json`** — the raw tool outputs the grades
+   rest on, the verdict log that makes verification idempotent, and the checkpoint marked `complete`.
 5. **A remediation plan** — the M0→M‑A milestone table populated with this codebase's actual top
    tasks, ordered by grade leverage, each tied to the dimension(s) it closes.
 6. **A short executive summary** — current letter, the 2–3 dimensions holding it back, and the single
-   highest‑leverage next action.
+   highest‑leverage next action. Close it with the honest residual line: **what stopped the loop, what
+   is still `unverified`, and roughly what the run cost.**
 
 ---
 
@@ -193,6 +326,18 @@ SHAs; add the stale‑checkout guard. These produce grade‑relevant data within
 - **Prove every gate is non‑vacuous.** A gate that can never fail is worthless — confirm it currently
   fails on a known violation (or would).
 - **Fail closed.** Any check that can't determine its status counts as *failing*, not passing.
+- **Unverified is neither refuted nor confirmed.** "Fail closed" applies to *gates* — an undetermined
+  gate fails, which protects the grade. It does **not** license discarding *findings*: a finding whose
+  skeptics crashed was never judged, and dropping it silently protects nothing while destroying real
+  evidence. Both directions are conservative, and they point opposite ways. Keep `unverified` findings
+  in the ledger, exclude them from the verified set, and count them out loud in the scorecard.
+- **Effort follows leverage.** Verification depth is spent by consequence (Section 4.0), not spread
+  evenly. Three skeptics arguing about a lint‑level finding is not rigor; it is budget taken from the
+  Critical path. Equally, never *narrow discovery* to save tokens — cut depth of argument, never breadth
+  of search, and say which you cut.
+- **Report the spend.** Every run records approximate agent/token cost and its stop condition in the
+  run‑history row. An audit whose cost is unmeasured cannot be tuned, and a run that stopped on budget
+  must never be described as exhaustive.
 - **Every fix is behavior‑preserving and independently re‑verified** — re‑run the actual gate/tests
   before claiming it's closed. Don't re‑read a file to "confirm" an edit; run the check.
 - **Report outcomes faithfully.** If tests fail, say so with the output. If a step was skipped, say

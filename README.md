@@ -29,8 +29,9 @@ human; the prompt file is what you hand to the LLM.
      access): it runs the whole thing itself — census, finders, verification, writes the
      scorecard/ledger. This is the intended mode.
    - **Multi‑agent orchestration available** (e.g. Claude Code's Workflow tool, or any fan‑out
-     harness): use it for Phase 1/2 — one agent per *repo × lens*, then adversarial verifiers. Far
-     more thorough.
+     harness): use it for Phase 1 (one agent per *repo × lens*) and Phase 3 (adversarial verifiers).
+     Far more thorough. **Read Section 4.0 first** — verification is ~90% of the cost, so the free
+     collapse/triage pass in Phase 2 has to happen before it, not after.
    - **Plain chat LLM, no tools:** it will print the exact census commands for *you* to run, you
      paste the outputs back, and it triages from there. Slower, but the method still holds.
 4. **Re‑run after each remediation milestone.** The scorecard diff is the proof the grade is
@@ -48,11 +49,39 @@ The five things that make this different from an ordinary audit — keep them in
 | Eyeballed by reading code | **Tool census is ground truth**; the model triages a complete machine inventory |
 | "Tests exist → looks fine" | **Coverage (esp. branch) is a primary, quantified workstream** |
 
+## Cost & resumability
+
+Exhaustive discovery is cheap; *arguing about every finding at equal depth* is what makes a deep audit
+expensive. The prompt separates the two, so thoroughness survives a budget instead of competing with it.
+
+- **Verification is the budget.** It scales as *findings × skeptics*. Everything else — census,
+  finders, synthesis — is a rounding error next to it.
+- **Free filtering runs first.** Dedup, root‑cause collapse, rubric mapping, and the grade‑relevance
+  gate (Phase 2) are plain computation with no agents, and they run *before* verification (Phase 3).
+  Deduping after verifying means paying 3× to argue about findings you were about to merge or drop.
+- **Tool‑emitted findings skip the panel.** If an analyzer, scanner, or coverage report asserts it, the
+  tool *is* the verification. Adversarial skeptics exist for `inferred` behavioral claims — the only
+  findings that can be plausible‑but‑wrong.
+- **Depth follows consequence.** Skeptic count is set by severity, with a severity rubric that anchors
+  finders (ungrounded finders over‑rate severity badly, which inflates both cost and remediation order).
+- **Nothing is paid for twice.** Findings hit `backlog.jsonl` as `candidate` the moment a finder
+  returns; every verdict is appended to `verdicts.jsonl` keyed by a content‑derived `fingerprint`; each
+  phase checkpoints `run-state.json`. A run that dies mid‑audit resumes owing only the unverified
+  remainder — no re‑census, no re‑finding, no re‑verification.
+- **`{{BUDGET}}` scales depth of argument, never breadth of search** — and the run states which stop
+  condition ended it, because *"stopped: budget"* and *"stopped: 2 dry rounds"* are different claims
+  about completeness.
+
+Integrity is unchanged and in places stricter: a skeptic that **crashed did not vote** (infrastructure
+failure must never be recorded as "refuted"), severity corrections returned by verification are
+**applied**, not just logged, and anything left `unverified` is named and counted in the scorecard
+rather than silently dropped.
+
 ## Quick‑start checklist
 
 - [ ] Fill Section 0 inputs in [prompt.md](prompt.md) (at minimum, the repo path(s)).
 - [ ] Phase 0: pin SHAs, confirm you're on the canonical (not a stale) checkout, run the census.
 - [ ] Stand up `audit/` (scorecard + empty `backlog.jsonl`).
-- [ ] Phase 1–5: finders → adversarial verify → dedup/map → loop‑until‑dry → synthesis.
+- [ ] Phase 1–5: finders → collapse/triage → adversarial verify → loop‑until‑dry → synthesis.
 - [ ] Emit the output contract (prompt Section 6).
 - [ ] Pick the top milestone task by grade leverage; execute; re‑run the audit; watch the scorecard diff.
