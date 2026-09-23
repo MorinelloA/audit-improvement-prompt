@@ -81,8 +81,9 @@ expensive. The prompt separates the two, so thoroughness survives a budget inste
 
 - **Verification is the budget.** It scales as *findings × skeptics*. Everything else — census,
   finders, synthesis — is a rounding error next to it.
-- **Free filtering runs first.** Dedup, root‑cause collapse, rubric mapping, and the grade‑relevance
-  gate (Phase 2) are plain computation with no agents, and they run *before* verification (Phase 3).
+- **Free filtering runs first.** Dedup, root‑cause collapse, and rubric mapping (Phase 2) are plain
+  computation, and the grade‑relevance gate is one judgment by the orchestrator. None of it spawns an
+  agent, and all of it runs *before* verification (Phase 3).
   Deduping after verifying means paying 3× to argue about findings you were about to merge or drop.
 - **Tool‑emitted findings skip the panel.** If an analyzer, scanner, or coverage report asserts it, the
   tool *is* the verification. Adversarial skeptics exist for `inferred` behavioral claims — the only
