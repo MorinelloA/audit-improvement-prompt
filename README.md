@@ -123,3 +123,7 @@ rather than silently dropped.
 - [ ] Phase 1–5: scripted ingestion → finders → collapse/triage → adversarial verify → targeted rounds → synthesis.
 - [ ] Read the output contract (prompt Section 6), especially the residual line: stop condition, unverified count, failed or N/A census steps, cost.
 - [ ] Pick the top milestone task by grade leverage; execute; re‑run the audit; watch the scorecard diff.
+
+## License
+
+[MIT](LICENSE)
