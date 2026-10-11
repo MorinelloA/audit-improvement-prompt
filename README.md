@@ -1,128 +1,82 @@
-# Audit‑to‑A — A Reusable Deep‑Audit Prompt for Any Codebase
+# Audit-to-A
 
-A portable, tool‑grounded audit methodology that grades a codebase against an **operational
-rubric** (a deterministic weighted formula, not a vibe), records findings in a **persistent
-ledger** so progress compounds across runs, and emits a **staged remediation plan** that — when
-executed — provably reaches an "A." It works for one repo or many, in any language.
+Ask a model to grade a codebase and odds are it says B. Fix half of what it found, ask again:
+another B, for a different handful of reasons. The grade is a judgment call, and nothing carries
+over from one run to the next.
 
-**The prompt itself lives in [prompt.md](prompt.md).** This README is the documentation for the
-human; the prompt file is what you hand to the LLM.
+Audit-to-A turns the grade into arithmetic. Before judging anything, the agent runs real tools over
+the code: linters, coverage, secret and dependency scanners, a dump of every route with its auth.
+Findings go into a ledger that carries over between runs, so fixes get credit. The grade is ten
+weighted dimensions scored against fixed gates; once every gate passes, the codebase is an A and
+there's nothing left to argue about. Any language, one repo or a folder full of them.
 
-> **Why this exists.** A normal "review my code" prompt produces a different ad‑hoc grade every
-> time and re‑finds the same handful of salient issues. It has a structural ceiling: the grade is
-> an LLM judgment call (anchors to "competent‑but‑imperfect" ≈ B forever), prior fixes are never
-> credited, thoroughness is capped, findings are eyeballed instead of tool‑measured, and test/branch
-> coverage is never quantified. This prompt removes that ceiling by making the grade a *formula over
-> measurable gates* — once every gate is green, the grade **is** an A by construction, with no
-> opinion left to disagree with.
+[prompt.md](prompt.md) is what you give the model. This README is for you.
 
----
+## Running it
 
-## How to use
+1. Start your agent in the repo you want audited (or in a folder of repos). There's nothing to fill
+   in; it reads what it needs off the checkout.
+2. Give it all of `prompt.md`, appendices included.
+3. Check the scope and layer map printed at the top of the scorecard. If you disagree, edit
+   `audit/config.json` and the next run picks it up.
+4. Work through the fix plan. It's split into milestones, M0 to M-A, with tasks ranked by how much
+   they move the grade. Re-run the audit after each milestone and compare scorecards.
 
-1. **Open the repo you want audited** in the agent's working directory. There is nothing to fill
-   in: Section 0 of the prompt resolves every input from the checkout itself (see *What it decides
-   for you* below). To override anything, say so in your message ("quick budget", "exclude
-   `src/legacy`") or edit `audit/config.json` after the first run.
-2. **Give the LLM the entire `prompt.md` file** (it is self‑contained, including the per‑stack
-   census command cookbook in Appendix A, the sink/footgun grep list in Appendix B, and the
-   one‑page sub‑agent briefs in Appendix C).
-3. **Pick the execution mode:**
-   - **Agentic LLM with tools** (Claude Code, Cursor, an SDK agent, anything with shell + file
-     access): it runs the whole thing itself — census, finders, verification, writes the
-     scorecard/ledger. This is the intended mode.
-   - **Multi‑agent orchestration available** (e.g. Claude Code's Workflow tool, or any fan‑out
-     harness): use it for Phase 1 (one agent per *repo × lens*) and Phase 3 (adversarial verifiers).
-     Far more thorough. **Read Section 4.0 first** — verification is ~90% of the cost, so the free
-     collapse/triage pass in Phase 2 has to happen before it, not after.
-   - **Plain chat LLM, no tools:** it will print the exact census commands for *you* to run, you
-     paste the outputs back, and it triages from there. Slower, but the method still holds.
-4. **Re‑run after each remediation milestone.** The scorecard diff is the proof the grade is
-   climbing. Same code state + same pinned SHAs ⇒ same letter (reproducible by design).
+It's built for an agent with a shell and file access (Claude Code, Cursor and the like), which runs
+every step itself and checks in after each phase. Expect a full run to take a while. If your harness
+can fan out sub-agents, the prompt puts them to work as finders and skeptics; read Section 4.0
+first, because that's where the cost gets decided. A chat model with no tools works too. It prints
+the commands, you run them and paste back the output. Slower, same method.
 
-## What it decides for you
+You can also steer it from your message ("quick budget", "exclude `src/legacy`"). Your message wins
+over `config.json`, which wins over what it works out for itself. The budget defaults to `standard`.
+Database changes stay review-only unless you say "apply DB changes".
 
-Every former input is auto‑resolved, written to `audit/config.json` with its source (`auto`,
-`default`, or `human`), and printed in the scorecard header so the decision is reviewable rather
-than silent. Precedence is: your message → an existing `config.json` → auto‑detection.
+## What it writes
 
-| Input | Default resolution |
-|---|---|
-| Repo set | Git toplevel of the working directory; an umbrella folder yields one `repo` per child repo; workspaces are modules, not repos |
-| Stacks, project name | Manifests; `origin` remote basename |
-| Audit workspace | `audit/` at the repo (or umbrella) root, added to `.git/info/exclude` so no tracked file changes |
-| Out of scope | Generated code, vendored deps, build output, lockfiles (lint only), fixtures (lint only), migrations — **disclosed**, never assumed beyond that |
-| Layer map | Each module classified `core` / `api` / `ui` / `client` / `test` / `infra` by convention, then dependency direction; coverage gates apply per layer |
-| Critical flows | 3–5 flows from the entry‑point inventory (auth, primary write path, hottest read path) |
-| Budget, DB policy, "A" threshold | `standard`, `review-only`, 3.85 |
-| Write policy | Writes only under `audit/` plus uncommitted analyzer config; never commits, pushes, branches, or edits tracked source |
+```text
+audit/
+  config.json      the inputs it worked out, and where each came from
+  scorecard.md     the grade and the evidence for it, plus run history
+  backlog.jsonl    every finding ever filed (fixed ones stay, marked closed)
+  verdicts.jsonl   each skeptic's verdict, so nothing gets argued over twice
+  run-state.json   a checkpoint, so a dead run can resume
+  closed.md        fixes with their commits, and regressions
+  census/<date>/   raw tool output, plus a manifest of what each tool scanned
+```
 
-Dimensions or clauses that genuinely don't apply (no HTTP surface, no database, no UI) are marked N/A
-with inventory evidence and drop out of the denominator. "Hard to measure" is not N/A; it fails closed.
+`audit/` goes in `.git/info/exclude`, so it stays out of `git status`. The census may add analyzer
+settings to your build config; those stay uncommitted, and the scorecard lists them. The audit never
+commits, pushes, creates a branch or edits your code. Fixing things is a separate request.
 
-## What makes it different
+## How the grade works
 
-The five things that make this different from an ordinary audit — keep them intact if you adapt it:
+Ten dimensions, weighted: security (18), testing (18), architecture (15), code quality (13),
+correctness (12), performance (8), dependencies (6), DevEx and ops (6), accessibility (5, UI only)
+and documentation (4). Each scores 0 to 4 on whether its gates pass. The weighted average is a GPA,
+and 3.85 or better is an A. A script does the math (decimal, rounded half up), and the scorecard
+pins every repo's commit, so the same code should always get the same letter.
 
-| Ordinary audit | This method |
-|---|---|
-| Grade is an LLM vibe → anchors to B every run | **Grade is a weighted formula** over measurable per‑dimension gates |
-| "Ignore prior reviews / fresh eyes" → can't compound | **Persistent scorecard + ledger**; credit closed items; progress accumulates |
-| "Prefer 15 findings over 50" → caps thoroughness | **No finding cap; exhaustive module × dimension matrix; loop‑until‑dry** |
-| Eyeballed by reading code | **Tool census is ground truth**; the model triages a complete machine inventory |
-| "Tests exist → looks fine" | **Coverage (esp. branch) is a primary, quantified workstream**, plus assertion‑less, skipped, and mutation‑sampled tests |
-| "Auth looks fine" from reading a few controllers | **Entry‑point inventory** — every route, consumer, job and webhook with its auth and validation binding — so authz and validation are measurable |
-| "0 warnings" taken at face value | **Suppression census** and **known‑violation probes**: a clean result from a tool that scanned nothing, or a baseline built on `#pragma disable`, is a failed gate |
+Gates fail closed. A check that applies but can't be measured counts as a miss, and N/A has to be
+backed by the inventory: no endpoints, no endpoint-auth check. Clean results get checked too. The
+census records how many files each tool scanned and, where it's cheap, plants a known problem in
+`audit/probes/` (a fake AWS key, say) to make sure the tool flags it. Zero warnings from a scanner
+that read zero files fails the gate. So does a zero propped up by `#pragma warning disable`.
 
-## Cost & resumability
+## Cost
 
-Exhaustive discovery is cheap; *arguing about every finding at equal depth* is what makes a deep audit
-expensive. The prompt separates the two, so thoroughness survives a budget instead of competing with it.
+Finding problems is cheap. The bill comes from arguing about them: findings no tool proved go to
+skeptic agents told to refute them, and 270 unfiltered findings at three skeptics apiece is about
+810 agents. So the free work runs first. Duplicates merge and repeats collapse to one root cause (35
+untested pages missing the same test seam become one finding) before any skeptic is spawned.
+Anything a tool already proved skips the panel, and the rest get skeptics by severity: two or three
+for a Critical, usually none for a Low. A smaller budget cuts agents and rounds. Every lens still
+runs over the same files.
 
-- **Verification is the budget.** It scales as *findings × skeptics*. Everything else — census,
-  finders, synthesis — is a rounding error next to it.
-- **Free filtering runs first.** Dedup, root‑cause collapse, and rubric mapping (Phase 2) are plain
-  computation, and the grade‑relevance gate is one judgment by the orchestrator. None of it spawns an
-  agent, and all of it runs *before* verification (Phase 3).
-  Deduping after verifying means paying 3× to argue about findings you were about to merge or drop.
-- **Tool‑emitted findings skip the panel.** If an analyzer, scanner, or coverage report asserts it, the
-  tool *is* the verification. Adversarial skeptics exist for `inferred` behavioral claims — the only
-  findings that can be plausible‑but‑wrong.
-- **Depth follows consequence.** Skeptic count is set by severity, with a severity rubric that anchors
-  finders (ungrounded finders over‑rate severity badly, which inflates both cost and remediation order).
-- **Machines file tool findings.** Analyzer hits, vulnerable packages, uncovered files and
-  suppressions become ledger candidates by script, grouped by rule and directory. No agent re‑types
-  500 warnings into JSON; finders spend tokens only on root‑cause collapse and on what no tool emits.
-- **Fan‑out matches the work.** Tool‑led lenses (dead code, duplication, dependencies, coverage) get one
-  agent each with repos batched at every budget, because their input is a table. Judgment‑led lenses
-  fan out per repo. Medium/Low findings in the same module share a skeptic call; Critical/High never do.
-- **Later rounds are targeted, not repeated.** Round 1 fills a module × lens coverage matrix; a
-  one‑agent completeness critic then seeds only empty cells, the neighbourhood of verified
-  Critical/High findings, and mechanisms the ledger relies on that nobody read. A full matrix plus an
-  empty critic is a stop condition in itself — cheaper and stronger than "two more rounds found nothing."
-- **Sub‑agents get a one‑page brief**, not the whole prompt (Appendix C). The orchestrator is the only
-  reader of Sections 0–7.
-- **Nothing is paid for twice.** Findings hit `backlog.jsonl` as `candidate` the moment a finder
-  returns; every verdict is appended to `verdicts.jsonl` keyed by a content‑derived `fingerprint`; each
-  phase checkpoints `run-state.json`. A run that dies mid‑audit resumes owing only the unverified
-  remainder — no re‑census, no re‑finding, no re‑verification.
-- **Budget scales depth of argument, never breadth of search** — and the run states which stop
-  condition ended it, because *"stopped: budget"* and *"stopped: matrix full, critic empty"* are
-  different claims about completeness.
-
-Integrity is unchanged and in places stricter: a skeptic that **crashed did not vote** (infrastructure
-failure must never be recorded as "refuted"), severity corrections returned by verification are
-**applied**, not just logged, and anything left `unverified` is named and counted in the scorecard
-rather than silently dropped.
-
-## Quick‑start checklist
-
-- [ ] Open the target repo in the agent's working directory and hand it [prompt.md](prompt.md). Nothing to fill in.
-- [ ] Phase 0: it resolves `audit/config.json`, pins SHAs (+ dirty‑tree digest), records any provenance warning, runs the census with a `manifest.json` proving each tool scanned something.
-- [ ] Review the auto‑derived scope and layer map in the scorecard header; edit `config.json` if you disagree.
-- [ ] Phase 1–5: scripted ingestion → finders → collapse/triage → adversarial verify → targeted rounds → synthesis.
-- [ ] Read the output contract (prompt Section 6), especially the residual line: stop condition, unverified count, failed or N/A census steps, cost.
-- [ ] Pick the top milestone task by grade leverage; execute; re‑run the audit; watch the scorecard diff.
+Verdicts are saved as they land and each phase writes a checkpoint, so a run that dies halfway
+resumes owing only what's still unverified. A crashed skeptic doesn't count as a vote, and a finding
+that can't get enough real verdicts is marked unverified. The scorecard counts those and says why
+the run stopped. A run that hit its budget never gets called exhaustive.
 
 ## License
 
