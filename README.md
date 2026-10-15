@@ -14,11 +14,13 @@ there's nothing left to argue about. Any language, one repo or a folder full of 
 
 ## Running it
 
-1. Start your agent in the repo you want audited (or in a folder of repos). There's nothing to fill
-   in; it reads what it needs off the checkout.
+1. Start your agent in the repo you want audited (or in a folder of repos), with the setup below.
+   There's nothing to fill in; it reads what it needs off the checkout.
 2. Give it all of `prompt.md`, appendices included.
-3. Check the scope and layer map printed at the top of the scorecard. If you disagree, edit
-   `audit/config.json` and the next run picks it up.
+3. Answer its one round of questions. Once it has looked at the checkout, it asks which missing
+   scanners it may install, what only you can provide (a `gh` sign-in, a database the tests need),
+   and whether its scope, layer map and budget look right. Then it runs to the end. Your
+   answers go in `audit/config.json`; edit that file to change them, and the next run picks it up.
 4. Work through the fix plan. It's split into milestones, M0 to M-A, with tasks ranked by how much
    they move the grade. Re-run the audit after each milestone and compare scorecards.
 
@@ -31,6 +33,41 @@ the commands, you run them and paste back the output. Slower, same method.
 You can also steer it from your message ("quick budget", "exclude `src/legacy`"). Your message wins
 over `config.json`, which wins over what it works out for itself. The budget defaults to `standard`.
 Database changes stay review-only unless you say "apply DB changes".
+
+## Setup
+
+Last checked October 2026.
+
+| | Claude Code | OpenAI Codex |
+|---|---|---|
+| Model | Opus 5.5 (Fable 5.1 for an `exhaustive` budget) | GPT-6.1 Sol |
+| Effort | `xhigh` | Extra High |
+| Long run | Auto mode | `/permissions`, then Approve for me |
+
+```bash
+claude --model opus --effort xhigh --permission-mode auto --disallowedTools "Bash(git push *)" "Bash(git commit *)"
+```
+
+```bash
+codex -m gpt-6.1-sol -c model_reasoning_effort=xhigh -c sandbox_workspace_write.network_access=true
+```
+
+The audit never commits or pushes, and the Claude command blocks both, which auto mode would
+otherwise allow. Codex's sandbox keeps the network off unless you turn it on, as the command does. In
+a desktop app, make the same choices from its menus. Where the harness lets it pick a model per
+sub-agent, as Claude Code does, the prompt runs the cheap roles (tool-led finders, Medium and Low
+skeptics) one tier down. A full run outgrows Claude Pro and ChatGPT Plus limits; Claude Max, ChatGPT
+Pro or an API key suits it.
+
+## What you need
+
+- A checkout whose dependencies install and whose tests run. Coverage is measured by running them.
+- The scanners for your stacks (the prompt's Appendix A lists them), or your go-ahead to install
+  them. A tool that can't run fails its gates closed.
+- `gh` signed in (or `glab`, `az`) for the branch-protection check. Without it, that check is
+  recorded as unverifiable.
+- Any services the tests need, such as a database container.
+- Network access, for the vulnerability and end-of-life lookups.
 
 ## What it writes
 
