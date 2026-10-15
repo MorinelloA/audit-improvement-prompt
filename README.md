@@ -68,6 +68,8 @@ Pro or an API key suits it.
   recorded as unverifiable.
 - Any services the tests need, such as a database container.
 - Network access, for the vulnerability and end-of-life lookups.
+- A skim of the prompt's Appendix D, the traps earlier runs hit, such as no secret scanner on the
+  machine or an agent sandbox that blocked the network.
 
 ## What it writes
 

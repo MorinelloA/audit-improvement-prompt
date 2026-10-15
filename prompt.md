@@ -191,8 +191,9 @@ observably wrong by Monday?"* — if the answer is "nothing," it is not Critical
   `*.tf`/`*.bicep`/`serverless.yml`, …). Write `config.json`.
 
 **3.2 One question round (then run to the end).** Once the stacks are known, and before the census
-installs or runs anything, ask the human once, with your harness's question feature if it has one.
-Give each question its options, with your recommendation first:
+installs or runs anything, read the Appendix D traps that apply to these stacks, then ask the human
+once, with your harness's question feature if it has one. Give each question its options, with your
+recommendation first:
 - **What the census needs installed:** the Appendix A and cross‑language tools for these stacks that
   are neither on the machine nor in the repo, and what installing each involves (global or
   project‑local, and any working‑tree change it makes).
@@ -684,3 +685,102 @@ LIMITS Change nothing and run nothing. Never ask the human; put anything you nee
 RETURN {"seeds":[{"module":..,"lens":..,"why":"empty-cell|neighbour-of-<fingerprint>|
         unread-mechanism:<claim>"}]} — an empty list means the run may stop.
 ```
+
+---
+
+# APPENDIX D — TRAPS FROM EARLIER RUNS (check each before it costs you a re‑run)
+
+Each of these cost a real run a re‑run, a failed census step, an unverifiable gate or a wrong grade.
+The Process and Tools traps bite during the audit; the CI traps bite when M0 wires the gates.
+
+**Process**
+- A scorecard cited ten finding IDs that pointed at different findings in the ledger, because a
+  script renumbered the ledger after the scorecard was drafted. Write the ledger first, never
+  renumber it, and pull every ID the scorecard cites from `backlog.jsonl` by script.
+- Slug fingerprints don't merge one defect worded two ways. One run ledgered a missing e2e suite
+  twice; another merged 270 findings to 215 (one line had been found by 11 finder runs) and still
+  met 8 duplicates at closing. In Phase 2, list the candidates that cite the same file, overlapping
+  lines and the same clause, and merge the ones that describe one defect before verification.
+- A re‑grade written by hand printed 3.89 (an A) where its own scores gave 3.82, and its "was"
+  column disagreed with the first grading on six of nine dimensions. Run the composite script on
+  every re‑grade, and read earlier scores from the scorecard, not from memory.
+- One run credited the analyzers and vulnerability gate the census had added to the working tree as
+  the repo's own gate, then filed them as a High for being untracked. Grade the repo as committed:
+  the census's working‑tree config measures, it is not the repo's gate, and it is not a finding.
+- A test that hit jest's 5 s default timeout on a cold full run, and passed in 1.5 s alone, had the
+  baseline grade the suite red. Rerun a timed‑out test on its own before grading the suite, and
+  record both runs.
+- A jest setup that pinned `TZ=UTC` hid a bug that showed every US user dates a day early. Run the
+  date and time tests once more under a zone west of UTC (`TZ=America/New_York`).
+- In a multi‑repo set, one repo sat on a colleague's work‑in‑progress branch two framework majors
+  behind the rest, and the run audited a worktree it made outside `audit/`. Record every repo's
+  branch, name a mismatch in the provenance warning and raise it in the 3.2 question round, rather
+  than making a worktree yourself.
+- One run's duplication history mixed three scopes (0.83% with tests, 1.1% without, then 0.13%), so
+  its before and after weren't comparable. Record the jscpd paths and ignore list in the manifest
+  and reuse them on every run.
+- An absolute warning ceiling was raised twice during remediation (447 → 474 → 491), because new
+  code adds warnings under the same rules however carefully it is written. Make the M0 gate fail on
+  warnings the change introduces, compared with the baseline by rule and file, not on a total.
+
+**Tools**
+- No run had `gitleaks` or `trufflehog`, so every secret scan was a regex sweep. Offer one in the
+  3.2 round; without it, the manifest says "regex sweep" and the scorecard claims no scanner pass.
+- SonarAnalyzer.CSharp ships S138 and S1448 (long method, long class) turned off, along with S104,
+  S107, S1541 and S1200; S3776 and S1144 are on. Enable them in `.editorconfig` at warning, or the
+  length gates scan every file and report nothing.
+- `<AnalysisMode>All</AnalysisMode>` added 466 CA2007 warnings (a no‑op in ASP.NET Core) and 133
+  CA1707 warnings (xUnit `Method_Condition_Expectation` names). Turn those off in `.editorconfig`
+  with the reason beside each, and list them in the scorecard.
+- EF Core migrations carry no generated‑code header, so they produced 45 of 491 analyzer warnings
+  and two of seven long methods; generated Tailwind CSS showed 4.93% duplication. Set
+  `generated_code = true` under `[**/Migrations/*.cs]` in `.editorconfig`, and add generated CSS to
+  the jscpd ignore list and the out‑of‑scope list.
+- MSBuild's "N Warning(s)" line counts some warnings twice (946 printed, 941 unique). Tally from the
+  SARIF by rule, file and line.
+- coverlet 10.0.0 over‑counted branches in `is { }` patterns; 10.0.1 moved branch coverage from
+  82.3% to 80.7% on identical code. Record the coverage tool's version in the manifest, and
+  re‑baseline before comparing runs across a version change.
+- knip treats a file imported only by its own test as used, so about 475 lines of dead code passed
+  clean. Take the dead‑code count from `knip --production`.
+- knip reports Expo packages as unused when only `app.json` plugins, native autolinking or the
+  Babel config reach them (seven `expo-*` packages and a Babel plugin in one run). File those as
+  `inferred`, not `tool`: only a prebuild, which is remediation work, settles them.
+- A repo with no ESLint config and no eslint installed had its lint baseline fail closed and
+  dimension 4 scored 1; M0 later measured 18 warnings with the framework's own preset. Offer that
+  preset (`eslint-config-expo` for Expo) in the 3.2 round, added to the working tree like any
+  analyzer.
+- `yarn audit` (Yarn 1) exits with a severity bitmask, not 0 or 1: one Low advisory gave exit code
+  2. High is 8 and Critical 16, so gate on those bits, or parse `--json`.
+- `dotnet list package --vulnerable` exits 0 and prints "no vulnerable packages given the current
+  sources" even when it never reached a vulnerability source, and a restore served from a warm
+  cache emits no NU190x warnings. Check that the "sources used" list names nuget.org, and prove the
+  step with a known‑vulnerable package in `audit/probes/` (Newtonsoft.Json 12.0.3 fails NU1903).
+- A pipe hides the exit code of the command before it. A CI gate piped `dotnet list` through
+  `tee`, and a census script piped every .NET step through `Tee-Object` and recorded no exit
+  codes. In bash use `set -o pipefail` or `${PIPESTATUS[0]}`; in PowerShell read `$LASTEXITCODE`
+  straight after the command.
+- Appendix B's `\.Result\b` matched a property named `Result` (`EmailLog.Result`), not
+  `Task.Result`. Check the type before filing a sync‑over‑async hit.
+- One run's `npm audit` couldn't reach the registry from the audit sandbox and was credited anyway,
+  on the argument that removing two packages couldn't add advisories. Ask about network access in
+  the 3.2 round; a scan that couldn't reach its source is a failed step.
+
+**Windows**
+- `node_modules` paths over 260 characters broke git's checkout and clean on a Windows runner. Set
+  `core.longpaths` through `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0` in the
+  pipeline's variables, which every git call honours, or run `git config --system core.longpaths
+  true` on the runner.
+
+**CI**
+- M0 wrote a GitHub Actions workflow for a repo whose remote was a self‑hosted GitLab on its own
+  domain, so the pipeline never ran. Identify the host from the remote and its API before writing
+  pipeline files or checking branch protection.
+- A GitLab shell runner on Windows (PowerShell) ignores `image:` and has no `apt-get`. Check the
+  runner's executor, and use the tools installed on that machine.
+- Mobile e2e flows (Maestro) can't run on a shell runner with no device or emulator, which capped
+  the testing dimension. A client e2e gate needs a runner with an emulator; until there is one, it
+  is a residual.
+- CodeQL failed at upload on every run, because code scanning on a private GitHub repo needs
+  Advanced Security, while dimension 1 was scored partly on it. Credit a CI gate only once a run
+  has produced its output; for CodeQL there, turn the upload off and read the SARIF in the job.
