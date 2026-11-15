@@ -22,7 +22,8 @@ there's nothing left to argue about. Any language, one repo or a folder full of 
    and whether its scope, layer map and budget look right. Then it runs to the end. Your
    answers go in `audit/config.json`; edit that file to change them, and the next run picks it up.
 4. Work through the fix plan. It's split into milestones, M0 to M-A, with tasks ranked by how much
-   they move the grade. Re-run the audit after each milestone and compare scorecards.
+   they move the grade. Fix one milestone per session, as [Fixing](#fixing) describes, then re-run
+   the audit and compare scorecards.
 
 It's built for an agent with a shell and file access (Claude Code, Cursor and the like), which runs
 every step itself and checks in after each phase. Expect a full run to take a while. If your harness
@@ -81,12 +82,48 @@ audit/
   verdicts.jsonl   each skeptic's verdict, so nothing gets argued over twice
   run-state.json   a checkpoint, so a dead run can resume
   closed.md        fixes with their commits, and regressions
+  fixes.jsonl      fixes claimed by fix sessions, for the next audit to check
+  fix-plan.md      each fix session's approved plan, ticked off as it commits
   census/<date>/   raw tool output, plus a manifest of what each tool scanned
 ```
 
 `audit/` goes in `.git/info/exclude`, so it stays out of `git status`. The census may add analyzer
 settings to your build config; those stay uncommitted, and the scorecard lists them. The audit never
-commits, pushes, creates a branch or edits your code. Fixing things is a separate request.
+commits, pushes, creates a branch or edits your code. Fixing things is a separate request, covered next.
+
+## Fixing
+
+The audit never edits your code, and a fix session never grades its own work. Fix one milestone
+per session, with an audit run between them, because every audit re-ranks what's left.
+
+1. Start a fresh session in the repo with the command below. It's the audit's setup with two
+   changes: it starts in plan mode, and it can commit. The Claude command still blocks pushes.
+2. Give it all of `prompt.md` and name the milestone: "execute M1", or part of one ("M2, coverage
+   only"). Name none and it takes the lowest milestone with open findings.
+3. Approve its plan: the milestone's findings grouped into commits, each with the test that proves
+   it and the gate that closes it. Then it runs to the end of the milestone and stops.
+4. Re-run the audit in a fresh session, with the audit's own command. It closes what the fix
+   session claimed, or says why not.
+
+| | Claude Code | OpenAI Codex |
+|---|---|---|
+| Plan phase | Plan mode | `/plan` |
+| Long run | Approve with "Yes, and use auto mode" | `/permissions`, then Approve for me |
+
+```bash
+claude --model opus --effort xhigh --permission-mode plan --disallowedTools "Bash(git push *)"
+```
+
+```bash
+codex -m gpt-6.1-sol -c model_reasoning_effort=xhigh -c plan_mode_reasoning_effort=xhigh -c sandbox_workspace_write.network_access=true
+```
+
+It commits on your current branch in themed batches, staging only its own changes, and only after
+the repo's CI checks pass locally. Each Critical or High fix lands with a test that fails on the
+old code. Each fix, with its commit, test and gate result, goes in `audit/fixes.jsonl`; the
+scorecard and the ledger stay the audit's. Database changes stay review-only unless you say "apply
+DB changes". It never pushes on its own. In Codex, tell it to push and it confirms the remote and
+reports the CI run. With the Claude command, push yourself, then ask it to check the CI run.
 
 ## How the grade works
 

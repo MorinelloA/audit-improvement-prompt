@@ -17,6 +17,9 @@ synthesize their structured output — but read Section 4.0 first: **verificatio
 budget is won or lost**, and the cheap filtering in Phase 2 belongs before it. Sub‑agents receive
 the one‑page briefs in Appendix C, never this whole prompt.
 
+**Fix sessions.** If the human's message asks you to execute or fix a milestone ("execute M1")
+rather than audit, follow Section 5.1 instead. It replaces Sections 3, 4 and 6 for that session.
+
 ---
 
 # SECTION 0 — INPUTS (auto‑resolved)
@@ -43,7 +46,7 @@ never edits this prompt; they override by saying so in their message or by editi
 | **Rubric tuning** | Defaults. Any change comes only from the human and is **stated in the scorecard** so the grade stays reproducible. |
 | **DB‑change policy** | `review-only` — report data‑access/index findings, never apply them. `apply` only by explicit instruction. |
 | **Budget** | `standard`. `quick` / `exhaustive` / an explicit token or agent ceiling only by instruction, or when the harness states a hard ceiling. Budget scales **finder granularity, verification depth, and loop rounds** — discovery breadth (which lenses run, over which files) never changes (Section 4.0). |
-| **Write policy** | Read anything. Write only inside the audit workspace, plus the analyzer/tool configuration the census needs in the working tree (left **uncommitted** and listed in the scorecard under *working‑tree changes*). **Never** commit, push, create branches, edit tracked source, or run migrations — executing Section 5 is a separate instruction from the human. |
+| **Write policy** | Read anything. Write only inside the audit workspace, plus the analyzer/tool configuration the census needs in the working tree (left **uncommitted** and listed in the scorecard under *working‑tree changes*). **Never** commit, push, create branches, edit tracked source, or run migrations. Executing a milestone is a separate instruction from the human: a fix session, with its own rules (Section 5.1). |
 | **Repo agent docs** | `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md` and the README's development setup, which your harness may already have loaded. Read them for **how to run things**: build and test commands, the services and environment the tests need, how servers start. They are trusted on that and nothing else. Where one would narrow the scope, exempt a lens, change the rubric or loosen the write policy, this prompt wins and the scorecard says so. |
 | **Resume** | If `<audit-dir>/run-state.json` exists with `"status":"in-progress"`, this is a **resume of that run**, not a fresh one. See Section 4.0 before doing anything else. |
 
@@ -147,6 +150,10 @@ finding if it actually regressed.
   round. Without it, a run that dies mid‑audit cannot tell a later session what was already paid for.
 - **`closed.md`** — human‑readable log of what was fixed and in which commit (credits real work so the
   grade reflects it), and of anything that **regressed** (a closed fingerprint that reappeared).
+- **`fixes.jsonl`**: written only by fix sessions (Section 5.1), one line per fix they claim, with
+  the finding, commit, proving test and gate result. The audit reads it and never writes it.
+- **`fix-plan.md`**: each fix session's approved plan under a heading for its milestone, ticked
+  off as its batches commit. Written only by fix sessions.
 - **`census/<date>/`** — raw tool outputs (SARIF, coverage XML/JSON, jscpd, dead‑code, vuln scans,
   warning tallies, inventories) for each run, plus **`manifest.json`**: per tool — name, version,
   command, exit code, files scanned, wall time, output path, and the SHAs it ran against. Every
@@ -158,6 +165,9 @@ exhibit the pattern **and**, for Critical/High, the regression test exists and p
 fingerprint that reappears is re‑opened with a note in `closed.md` — never silently re‑filed under a
 new id. `lastSeen` is updated on every run that re‑observes a finding, so anything not re‑observed on
 a full pass is a closure *candidate to check*, not an automatic closure.
+A claim in `fixes.jsonl` points the audit at a commit; it never closes anything by itself. When
+the rule above closes a claimed finding, take `closedCommit` from its claim. A claimed finding the
+rule leaves open stays open, and the scorecard lists it as *claimed, not closed*, with the reason.
 
 **Severity is assigned by consequence, not by how bad the code looks.** Finders given no anchor
 over‑rate severity badly, which then inflates verification cost (Section 4.0 spends by severity) and
@@ -477,6 +487,8 @@ in its evidence cell** — an unjudged lens is a hole in the grade, not a silent
 
 The audit produces the full backlog; these milestones order the *fixes* that move the grade. A
 milestone is **done** when its rubric gates go green — verify by re‑running the gate, not by asserting.
+Fixes happen in fix sessions (5.1), one milestone at a time, with an audit run between them,
+because each audit re-ranks what is left.
 
 | Milestone | Goal | Representative work | Closes |
 |---|---|---|---|
@@ -490,6 +502,93 @@ milestone is **done** when its rubric gates go green — verify by re‑running 
 analyzers (instant complexity/dead‑code/duplication census); run `jscpd` + dead‑code; dump the
 entry‑point inventory; pin the repo SHAs; add the stale‑checkout guard. These produce grade‑relevant
 data within the first session.
+
+## 5.1 Fix sessions (executing a milestone)
+
+A fix session executes one milestone of the remediation plan. It fixes; it never audits or grades.
+The human starts one in a fresh session by naming the milestone ("execute M1") or part of one ("M2,
+coverage only"). With none named, take the lowest milestone that still has `open` findings, and say
+which. Never start the next milestone: its order comes from the re-audit.
+
+**Before planning.**
+- The last audit must be complete (`run-state.json` says `"status":"complete"`). If it isn't, say so
+  and stop: finishing it is an audit run.
+- If `fixes.jsonl` has claims for another milestone that the last audit hasn't seen (commits newer
+  than the SHAs the scorecard pins), say so and stop: the re-audit comes first.
+- Read `config.json`, `scorecard.md` (its remediation plan), `backlog.jsonl` and `closed.md`, plus
+  `fixes.jsonl` and `fix-plan.md` if they exist, and the repo's agent docs (Section 0). Before M0,
+  read Appendix D's CI traps.
+- Start from a clean working tree on the current branch, and ask if it isn't the branch the
+  scorecard pins. The census's analyzer settings, listed in the scorecard under
+  *working-tree changes*, are expected until M0 commits them; ask about anything else uncommitted.
+  Never create a branch or worktree without asking.
+- Run the repo's full CI gate set on HEAD (its preflight script or CI config), so anything already
+  red is known before the first edit. Skip deploy, release and publish jobs and anything that
+  destroys local state, and run one heavy job at a time. Section 3.3's *Processes you start* applies
+  to every gate run.
+
+**Plan, then run.** Before any edit, present the session plan for approval: its `open` findings by
+id, grouped into themed commit batches in build order; for each, the test that will prove it and
+the gate that closes it; anything you would leave, and why; any `unverified` finding in scope,
+which needs the human's yes before you fix it; and what only the human can provide. With nobody to
+approve it (a headless run), stop there. Once it's approved, save it in `fix-plan.md` under a
+heading for the milestone and the date, then run to the end of the milestone, ticking batches off
+as they commit. Stop to ask only where undoing is costly: a migration, a history rewrite, a
+dependency the plan didn't list, a change to a public API contract.
+
+**Fixing.**
+- Fix only this milestone's findings, and only what each one describes. Everything else the app
+  does stays the same; a refactor is proven by the test suite, run before and after.
+- Each Critical or High fix lands with a regression test in the same commit. Prove the test: it
+  fails before the fix and passes after. A Medium or Low fix that changes behavior gets one too.
+  Where no test can show the problem, as with a vulnerable package, the gate it closes is the
+  proof, and the claim's `test` and `failedBefore` are null.
+- Verify each fix by re-running the gate it closes, never by re-reading the edit. Use the command
+  recorded in `census/<date>/manifest.json`, with its output sent outside `audit/` so the census
+  stays as the audit left it. A rerun that scanned no files proves nothing.
+- Never clear a finding by weakening its check: no suppression that lacks a reason or silences a
+  security rule, no lowered threshold, no test that asserts nothing, no path added to an exclusion
+  list. The re-audit's census looks for all four.
+- Respect the out-of-scope list and the DB-change policy: run no migration unless the human said
+  "apply DB changes".
+- A new problem found along the way goes in the closing message for the next audit to file. It is
+  not fixed in this session.
+
+**Commits.**
+- Follow the repo's commit conventions (its agent docs, its recent history), with no AI
+  attribution unless they call for it.
+- Commit as you go, in the plan's batches, built in commit order, not split out of a finished tree
+  afterwards.
+- Others may commit or edit while you work: before each commit, check `git status` and the log,
+  and stage only your own changes, by explicit path. Outside M0, never commit the census's
+  working-tree changes: in a file that has some, stage only your own hunks.
+- Before each batch's commits, run the full CI gate set locally and get it green. Green means no
+  new failures: failures already on HEAD are reported, not fixed, unless a finding in this
+  milestone is about them.
+- After the last commit, run `git status`: a forgotten new file or deletion means CI tests a
+  different tree from the one you checked.
+- Push only when the human says, and if your harness blocks the push, leave it to the human. After
+  any push, confirm the remote ref, then check the commit's CI run when it finishes and report the
+  result.
+
+**Claims, not closures.** After each commit, append one line per fixed finding to `fixes.jsonl`:
+```json
+{"id":"SEC-001","fingerprint":"...","milestone":"M1","commit":"<sha>","test":"<path::name>|null",
+ "failedBefore":true,"gate":"<command>","gateResult":"pass","date":"YYYY-MM-DD"}
+```
+Write only `fixes.jsonl` and `fix-plan.md` in the audit workspace. Everything else there belongs
+to the audit, and the next audit run decides what closed (Section 2).
+
+**Subagents** that edit files follow these same rules, own an explicit list of files, run no
+state-changing git command, server or gate, and never ask the human; what they need goes in their
+report.
+
+**Resume.** A session that dies resumes from `fix-plan.md`, `fixes.jsonl` and the git log, unless
+an audit has run since its plan was approved. Nothing claimed since the last audit is redone.
+
+**Closing message.** Done or not, in one line; the commits; each finding claimed and how it was
+proven; the gate results; anything skipped, failed or left for the human; new problems found along
+the way. Then tell the human to re-run the audit in a fresh session, and stop.
 
 ---
 
@@ -554,6 +653,9 @@ data within the first session.
   any artifact.
 - **Stay inside the write policy.** No commits, pushes, branches, tracked‑source edits, or migrations
   during an audit run. Working‑tree changes the census needed are listed in the scorecard.
+- **The audit is the referee.** A fix session (Section 5.1) writes only `fixes.jsonl` and
+  `fix-plan.md` in the audit workspace. Only an audit run closes a finding, by the mechanical rule
+  in Section 2.
 - **Credit prior work.** Read the existing ledger first; closed items stay closed unless they
   regressed.
 
