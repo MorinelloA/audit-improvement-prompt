@@ -37,11 +37,11 @@ Database changes stay review-only unless you say "apply DB changes".
 
 ## Setup
 
-Last checked October 2026.
+Last checked November 2026.
 
 | | Claude Code | OpenAI Codex |
 |---|---|---|
-| Model | Opus 5.5 (Fable 5.1 for an `exhaustive` budget) | GPT-6.1 Sol |
+| Model | Opus 5.5 (Fable 5.2 for an `exhaustive` budget) | GPT-6.1 Sol |
 | Effort | `xhigh` | Extra High |
 | Long run | Auto mode | `/permissions`, then Approve for me |
 
