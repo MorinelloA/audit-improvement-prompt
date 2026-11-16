@@ -153,7 +153,8 @@ finding if it actually regressed.
 - **`fixes.jsonl`**: written only by fix sessions (Section 5.1), one line per fix they claim, with
   the finding, commit, proving test and gate result. The audit reads it and never writes it.
 - **`fix-plan.md`**: each fix session's approved plan under a heading for its milestone, ticked
-  off as its batches commit. Written only by fix sessions.
+  off as its batches commit, plus any new problems the session noticed, which the next audit files
+  as candidates (Section 4). Written only by fix sessions.
 - **`census/<date>/`** — raw tool outputs (SARIF, coverage XML/JSON, jscpd, dead‑code, vuln scans,
   warning tallies, inventories) for each run, plus **`manifest.json`**: per tool — name, version,
   command, exit code, files scanned, wall time, output path, and the SHAs it ran against. Every
@@ -381,6 +382,10 @@ Severity comes from the tool's own level mapped through the Section 2 anchors �
 `Low` no matter how many there are. Group by (rule, directory) and write the grouped summary next to
 the raw output; that summary is the finders' slice.
 
+**Leads from fix sessions.** Before any finder runs, file each new problem a fix session noted in
+`fix-plan.md` since the last audit as an `inferred` candidate. Finders then see it among the known
+findings, and Phase 3 verifies it like any other.
+
 **Phase 1b — Finders (fan out by repo × lens; blind to each other; NO finding cap).** Each finder
 receives the Appendix C brief with its census slice, directory scope and the known inferred findings in
 that scope, and returns structured findings
@@ -477,7 +482,8 @@ sample** — silent truncation reads as "covered everything" when it didn't.
 ones to `wontfix` with the verdict; apply the mechanical closing rule (Section 2) to prior‑run
 findings; update `scorecard.md` (per‑clause status, per‑dimension scores + composite with arithmetic,
 SHAs pinned, working‑tree changes, run‑history row incl. cost and stop condition); mark
-regressed/closed items in `closed.md`; emit the milestone‑ordered remediation plan (Section 5); set
+regressed/closed items in `closed.md`; emit the milestone‑ordered remediation plan (Section 5) into
+`scorecard.md`, with each milestone's finding ids (Section 6); set
 `run-state.json` to `complete`. **Any dimension whose evidence includes `unverified` findings says so
 in its evidence cell** — an unjudged lens is a hole in the grade, not a silent pass.
 
@@ -551,8 +557,9 @@ dependency the plan didn't list, a change to a public API contract.
   list. The re-audit's census looks for all four.
 - Respect the out-of-scope list and the DB-change policy: run no migration unless the human said
   "apply DB changes".
-- A new problem found along the way goes in the closing message for the next audit to file. It is
-  not fixed in this session.
+- A new problem found along the way is not fixed in this session. Note it in the closing message
+  and under the session's heading in `fix-plan.md`, with its file:line, what is wrong and why it
+  matters; the next audit files it as a candidate (Section 4, *Leads from fix sessions*).
 
 **Commits.**
 - Follow the repo's commit conventions (its agent docs, its recent history), with no AI
@@ -607,7 +614,10 @@ the way. Then tell the human to re-run the audit in a fresh session, and stop.
    tool outputs the grades rest on (and proof each tool actually ran), the verdict log that makes
    verification idempotent, and the checkpoint marked `complete`.
 6. **A remediation plan** — the M0→M‑A milestone table populated with this codebase's actual top
-   tasks, ordered by grade leverage, each tied to the dimension(s) it closes.
+   tasks, ordered by grade leverage, each tied to the dimension(s) it closes. It goes in
+   `scorecard.md`, where each milestone lists the ids of its `open` and `unverified` findings;
+   every such finding is in exactly one milestone, and a fix session (Section 5.1) takes its work
+   from these lists.
 7. **A short executive summary** — current letter, the 2–3 dimensions holding it back, and the single
    highest‑leverage next action. Close it with the honest residual line: **what stopped the loop, what
    is still `unverified`, which census steps failed or were N/A, and roughly what the run cost.**
